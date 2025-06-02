@@ -57,6 +57,7 @@ const HomePageContent = () => {
         const { data: { user } } = await supabase.auth.getUser()
         
         if (user) {
+          console.log('✅ User already exists:', user.id)
           setUser(user)
           
           // Get user credits
@@ -68,16 +69,77 @@ const HomePageContent = () => {
 
           if (error) {
             console.error('Error fetching user data:', error)
+            // If user doesn't exist in database, create record
+            if (error.code === 'PGRST116') {
+              console.log('🔧 User not in database, creating record...')
+              const { error: createError } = await supabase
+                .from('users')
+                .upsert({
+                  id: user.id,
+                  anonymous_id: user.id,
+                  credits: 3, // Give 3 free credits to start
+                })
+              
+              if (!createError) {
+                console.log('✅ User record created with 3 free credits')
+                setCredits(3)
+              } else {
+                console.error('❌ Error creating user record:', createError)
+                setCredits(0)
+              }
+            } else {
+              setCredits(0)
+            }
           } else {
             setCredits(userData?.credits || 0)
           }
         } else {
-          // No user logged in - that's OK, they can browse as guest
-          setCredits(0)
+          // No user found - automatically create anonymous user
+          console.log('👤 No user found, creating anonymous user...')
+          
+          try {
+            const { data: authData, error: authError } = await supabase.auth.signInAnonymously()
+            
+            if (authError) {
+              console.error('❌ Anonymous signin error:', authError)
+              if (authError.message.includes('Anonymous sign-ins are disabled')) {
+                console.error('🚨 Anonymous sign-ins are disabled in Supabase settings')
+                // Show login prompt instead
+                setShowLoginPrompt(true)
+                setCredits(0)
+              } else {
+                setCredits(0)
+              }
+            } else if (authData.user) {
+              console.log('✅ Anonymous user created automatically:', authData.user.id)
+              setUser(authData.user)
+              
+              // Create user record in database with 3 free credits
+              const { error: dbError } = await supabase
+                .from('users')
+                .upsert({
+                  id: authData.user.id,
+                  anonymous_id: authData.user.id,
+                  credits: 3, // Give 3 free credits
+                })
+
+              if (dbError) {
+                console.error('❌ Database error:', dbError)
+                setCredits(0)
+              } else {
+                console.log('✅ User record created with 3 free credits')
+                setCredits(3)
+              }
+            }
+          } catch (autoSignInError) {
+            console.error('❌ Auto sign-in failed:', autoSignInError)
+            setShowLoginPrompt(true)
+            setCredits(0)
+          }
         }
       } catch (error) {
         console.error('Auth error:', error)
-        // Continue as guest even if auth fails
+        setShowLoginPrompt(true)
         setCredits(0)
       }
       
@@ -515,13 +577,13 @@ const HomePageContent = () => {
       }
 
       if (data.user) {
-        // Create user record in database with no initial credits
+        // Create user record in database with 3 free credits (consistent with auto sign-in)
         const { error: dbError } = await supabase
           .from('users')
           .upsert({
             id: data.user.id,
             anonymous_id: data.user.id,
-            credits: 0, // No initial credits
+            credits: 3, // Give 3 free credits like auto sign-in
           })
 
         if (dbError) {
@@ -529,9 +591,9 @@ const HomePageContent = () => {
           toast.error('Database error: ' + dbError.message)
         } else {
           setUser(data.user)
-          setCredits(0)
+          setCredits(3) // Set 3 free credits
           setShowLoginPrompt(false)
-          toast.success('Successfully registered! Purchase credits to get started.')
+          toast.success('Successfully signed in! You have 3 free credits to get started.')
         }
       }
     } catch (error) {

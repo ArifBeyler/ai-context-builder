@@ -103,6 +103,10 @@ const LanguageStep: React.FC<LanguageStepProps> = ({
         nextDisabled={!selections.language} 
         onNext={handleNext}
         nextLabel={(!user || credits <= 0) ? (!user ? "Sign In & Generate" : "Buy Credits & Generate") : "Generate Context"}
+        user={user}
+        credits={credits}
+        onPurchaseCredits={onPurchaseCredits}
+        onContextCreated={onContextCreated}
       />
     </AnimatedContainer>
   );

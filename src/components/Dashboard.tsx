@@ -208,6 +208,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                 ) : (
                   <CurrentStepComponent 
                     onContextCreated={onContextCreated}
+                    user={user}
+                    credits={credits}
+                    onPurchaseCredits={onPurchaseCredits}
                     {...({} as any)}
                   />
                 )
