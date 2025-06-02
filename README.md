@@ -1,5 +1,7 @@
 # AI Context Builder - Next.js MVP
 
+> **🚀 Status:** Production ready with Vercel deployment
+
 Next.js + Supabase + Stripe kullanan AI destekli context dosyası oluşturucu.
 
 ## Özellikler
