@@ -77,12 +77,12 @@ const HomePageContent = () => {
                 .upsert({
                   id: user.id,
                   anonymous_id: user.id,
-                  credits: 3, // Give 3 free credits to start
+                  credits: 1, // Give 1 free credit to start
                 })
               
               if (!createError) {
-                console.log('✅ User record created with 3 free credits')
-                setCredits(3)
+                console.log('✅ User record created with 1 free credit')
+                setCredits(1)
               } else {
                 console.error('❌ Error creating user record:', createError)
                 setCredits(0)
@@ -114,21 +114,21 @@ const HomePageContent = () => {
               console.log('✅ Anonymous user created automatically:', authData.user.id)
               setUser(authData.user)
               
-              // Create user record in database with 3 free credits
+              // Create user record in database with 1 free credit
               const { error: dbError } = await supabase
                 .from('users')
                 .upsert({
                   id: authData.user.id,
                   anonymous_id: authData.user.id,
-                  credits: 3, // Give 3 free credits
+                  credits: 1, // Give 1 free credit
                 })
 
               if (dbError) {
                 console.error('❌ Database error:', dbError)
                 setCredits(0)
               } else {
-                console.log('✅ User record created with 3 free credits')
-                setCredits(3)
+                console.log('✅ User record created with 1 free credit')
+                setCredits(1)
               }
             }
           } catch (autoSignInError) {
@@ -577,13 +577,13 @@ const HomePageContent = () => {
       }
 
       if (data.user) {
-        // Create user record in database with 3 free credits (consistent with auto sign-in)
+        // Create user record in database with 1 free credit (consistent with auto sign-in)
         const { error: dbError } = await supabase
           .from('users')
           .upsert({
             id: data.user.id,
             anonymous_id: data.user.id,
-            credits: 3, // Give 3 free credits like auto sign-in
+            credits: 1, // Give 1 free credit like auto sign-in
           })
 
         if (dbError) {
@@ -591,9 +591,9 @@ const HomePageContent = () => {
           toast.error('Database error: ' + dbError.message)
         } else {
           setUser(data.user)
-          setCredits(3) // Set 3 free credits
+          setCredits(1) // Set 1 free credit
           setShowLoginPrompt(false)
-          toast.success('Successfully signed in! You have 3 free credits to get started.')
+          toast.success('Successfully signed in! You have 1 free credit to get started.')
         }
       }
     } catch (error) {

@@ -104,7 +104,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         <div className="bg-white rounded-lg p-6 max-w-md mx-4">
           <h3 className="text-lg font-semibold mb-4">Login Required</h3>
           <p className="text-gray-600 mb-6">
-            You need to sign in anonymously to use this feature. You'll earn 3 free credits!
+            You need to sign in anonymously to use this feature. You'll earn 1 free credit!
           </p>
           <div className="flex gap-3">
             <button
