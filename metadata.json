@@ -1,0 +1,6 @@
+{
+  "name": "Ai Context Builder",
+  "description": "A web application to help users convert their ideas into structured context.md files for AI development tools, with AI-powered suggestions.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
