@@ -139,6 +139,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           onPurchaseCredits={onPurchaseCredits}
           user={user}
           onRequestLogin={onRequestLogin}
+          userId={user?.id || null}
         />
         {CurrentStepComponent === FinalScreen ? (
           <CurrentStepComponent 
@@ -171,6 +172,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         onPurchaseCredits={onPurchaseCredits}
         user={user}
         onRequestLogin={onRequestLogin}
+        userId={user?.id || null}
       />
       <main className="flex-grow flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 relative overflow-hidden">
         {isLoading && (

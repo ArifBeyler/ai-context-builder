@@ -53,10 +53,29 @@ export async function POST(request: NextRequest) {
     console.log('🔗 Success URL will be:', `${baseUrl}/?success=true&session_id=${session.id}`)
 
     return NextResponse.json({ url: session.url })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating checkout session:', error)
+    
+    // Check if it's a Stripe authentication error
+    if (error?.type === 'StripeAuthenticationError') {
+      console.log('🚨 Stripe API key issue detected - suggesting test payment')
+      return NextResponse.json(
+        { 
+          error: 'Payment system configuration issue',
+          useTestPayment: true,
+          message: 'Stripe is not configured properly. Use test payment instead.'
+        },
+        { status: 400 }
+      )
+    }
+    
+    // For other errors, provide helpful feedback
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { 
+        error: 'Payment system error',
+        message: error?.message || 'Unable to create payment session',
+        useTestPayment: true
+      },
       { status: 500 }
     )
   }

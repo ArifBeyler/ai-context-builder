@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, Suspense } from 'react'
+import { useEffect, useState, Suspense, useRef } from 'react'
 import { createSupabaseClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { User } from '@supabase/supabase-js'
@@ -29,6 +29,9 @@ const HomePageContent = () => {
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createSupabaseClient()
+  
+  // Add ref to prevent infinite payment processing
+  const paymentProcessingRef = useRef<Set<string>>(new Set())
 
   // Function to refresh user credits from database
   const refreshCredits = async () => {
@@ -269,10 +272,18 @@ const HomePageContent = () => {
       console.log('🔍 URL Parameters detected:', { success, sessionId })
       console.log('👤 Current user state:', { userExists: !!user, userId: user?.id, isLoad: isLoading })
       
-      // Prevent duplicate processing
+      // Prevent duplicate processing with multiple layers of protection
       const processingKey = `payment_processed_${sessionId}`
-      if (sessionStorage.getItem(processingKey)) {
+      const processingMemoryKey = `memory_${sessionId}`
+      
+      if (sessionStorage.getItem(processingKey) || paymentProcessingRef.current.has(processingMemoryKey)) {
         console.log('⚠️ Payment already processed for this session, skipping...')
+        // Clear URL parameters even if skipping
+        const newUrl = new URL(window.location.href)
+        newUrl.searchParams.delete('success')
+        newUrl.searchParams.delete('session_id')
+        newUrl.searchParams.delete('canceled')
+        window.history.replaceState({}, '', newUrl.toString())
         return
       }
       
@@ -280,103 +291,32 @@ const HomePageContent = () => {
         console.log('✅ Payment success detected for user:', user.id)
         console.log('🔖 Session ID:', sessionId)
         
-        // Mark as processing to prevent duplicates
+        // Mark as processing in both storage and memory to prevent duplicates
         sessionStorage.setItem(processingKey, 'true')
+        paymentProcessingRef.current.add(processingMemoryKey)
         
-        // Function to force complete payment if credits are not updated
-        const forceCompletePayment = async () => {
-          console.log('🚀 Force completing payment - adding credits via API...')
+        // Single payment completion function with strict duplication prevention
+        const completePaymentOnce = async () => {
+          console.log('🚀 Completing payment - adding credits via API (ONE TIME ONLY)...')
           
           try {
             const response = await fetch('/api/debug/credits', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ userId: user.id, credits: 5 })
+              body: JSON.stringify({ 
+                userId: user.id, 
+                credits: 5,
+                action: 'add',
+                paymentSessionId: sessionId // Include for idempotency tracking
+              })
             })
             
             const result = await response.json()
             
             if (result.success) {
-              console.log('✅ Credits force-added:', result)
+              console.log('✅ Credits added successfully:', result)
               setCredits(result.newTotal || 5)
-              toast.success('Credits added successfully!')
-              
-              // Clear URL parameters and trigger flow
-              const newUrl = new URL(window.location.href)
-              newUrl.searchParams.delete('success')
-              newUrl.searchParams.delete('session_id')
-              newUrl.searchParams.delete('canceled')
-              window.history.replaceState({}, '', newUrl.toString())
-              
-              // Only set force start flag if there's a pre-payment state to restore
-              const prePaymentStateStr = sessionStorage.getItem('prePaymentState');
-              if (prePaymentStateStr) {
-                console.log('🔄 Pre-payment state found, will restore user position')
-                sessionStorage.setItem('forceStartFlow', 'true')
-                console.log('✅ forceStartFlow flag set for recovery:', sessionStorage.getItem('forceStartFlow'))
-              } else {
-                console.log('✅ Payment completed - user can start fresh with new credits')
-              }
-              
-              if (credits > 0) {
-                console.log('✅ Credits found, payment verification complete!')
-                toast.success('Payment successful! Credits added to your account.')
-                return true
-              } else if (credits === 0) {
-                console.log('⏰ Max retries reached with no credits, force completing payment...')
-                await forceCompletePayment()
-                return
-              }
-            } else {
-              console.error('❌ Failed to force-add credits:', result)
-              return false
-            }
-          } catch (error) {
-            console.error('❌ Error force-completing payment:', error)
-            return false
-          }
-        }
-
-        // Enhanced retry mechanism with force completion
-        const refreshCreditsAfterPayment = async (retryCount = 0) => {
-          console.log(`🔄 Attempting to refresh credits, retry: ${retryCount}`)
-          
-          // Immediately set credits optimistically for better UX
-          if (retryCount === 0) {
-            console.log('🚀 Setting credits optimistically to 5 for immediate UI response')
-            setCredits(5)
-          }
-          
-          try {
-            const { data: userData, error } = await supabase
-              .from('users')
-              .select('credits')
-              .eq('id', user.id)
-              .single()
-
-            if (error) {
-              console.error('🚨 Database error while checking credits:', error)
-              
-              if (error.code === 'PGRST116' && retryCount === 0) {
-                // User not found in database, force complete payment
-                console.log('👤 User not found in database, force completing payment...')
-                const completed = await forceCompletePayment()
-                if (completed) return
-              }
-              
-              // If database errors persist, force complete after 2 retries
-              if (retryCount >= 2) {
-                console.log('🚨 Database errors persist, forcing payment completion...')
-                await forceCompletePayment()
-                return
-              }
-            } else {
-              const credits = userData?.credits || 0
-              console.log(`💳 Credits updated after payment: ${credits}`)
-              setCredits(credits)
-              
-              // Set force start flag regardless of credits status since payment was successful
-              console.log('🚀 Setting forceStartFlow flag after successful payment')
+              toast.success('Payment successful! Credits added to your account.')
               
               // Clear URL parameters
               const newUrl = new URL(window.location.href)
@@ -395,44 +335,34 @@ const HomePageContent = () => {
                 console.log('✅ Payment completed - user can start fresh with new credits')
               }
               
-              if (credits > 0) {
-                console.log('✅ Credits found, payment verification complete!')
-                toast.success('Payment successful! Credits added to your account.')
-                return
-              } else if (retryCount >= 4) {
-                // After 5 total attempts (0-4), force complete payment
-                console.log('⏰ Max retries reached with no credits, force completing payment...')
-                await forceCompletePayment()
-                return
-              }
-            }
-            
-            // Retry logic with exponential backoff
-            if (retryCount < 4) {
-              const delay = Math.min(2000 + (retryCount * 2000), 8000) // 2s, 4s, 6s, 8s
-              console.log(`⏳ No credits found yet, retrying in ${delay/1000}s...`)
-              setTimeout(() => refreshCreditsAfterPayment(retryCount + 1), delay)
-            }
-            
-          } catch (error) {
-            console.error('💥 Error checking credits:', error)
-            
-            if (retryCount >= 2) {
-              console.log('💥 Critical error, force completing payment...')
-              await forceCompletePayment()
+              return true
             } else {
-              setTimeout(() => refreshCreditsAfterPayment(retryCount + 1), 3000)
+              console.error('❌ Failed to add credits:', result)
+              toast.error('Payment processing error: ' + result.error)
+              return false
             }
+          } catch (error) {
+            console.error('❌ Error completing payment:', error)
+            toast.error('Payment processing error. Please contact support.')
+            return false
           }
         }
 
-        // Start the credit refresh process
-        refreshCreditsAfterPayment()
+        // Execute payment completion ONLY ONCE
+        completePaymentOnce()
         
       } else if (!isLoading) {
         // No user but payment was successful - try to restore session
         const restoreUserSession = async () => {
           console.log('🔄 Payment success detected but no user - attempting session restore...')
+          
+          // Prevent duplicate restoration attempts
+          if (sessionStorage.getItem(processingKey)) {
+            console.log('⚠️ Session restoration already attempted, skipping...')
+            return
+          }
+          
+          sessionStorage.setItem(processingKey, 'true')
           
           try {
             // Try to get user ID from Stripe session first
@@ -657,14 +587,55 @@ const HomePageContent = () => {
         }),
       })
 
-      const { url } = await response.json()
+      const data = await response.json()
       
-      if (url) {
-        window.location.href = url
+      if (!response.ok) {
+        // Handle Stripe configuration errors
+        if (data.useTestPayment) {
+          console.log('🚨 Stripe error detected:', data.message)
+          
+          // Show user-friendly error with test payment option
+          const useTestPayment = confirm(
+            `Payment System Issue: ${data.message}\n\n` +
+            'Would you like to use TEST PAYMENT instead? (No real money will be charged)\n\n' +
+            'Click OK for test payment or Cancel to try again later.'
+          )
+          
+          if (useTestPayment) {
+            console.log('🧪 User chose test payment, processing...')
+            
+            // Call test payment API
+            const testResponse = await fetch('/api/stripe/test-checkout', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userId: user.id, credits: 5 })
+            })
+            
+            const testResult = await testResponse.json()
+            
+            if (testResult.success) {
+              toast.success(`✅ Test payment successful! Added ${testResult.newCredits - credits} credits.`)
+              setCredits(testResult.newCredits)
+              refreshCredits() // Also refresh from database
+            } else {
+              toast.error('Test payment failed: ' + testResult.error)
+            }
+          }
+          return
+        } else {
+          throw new Error(data.error || 'Payment system error')
+        }
+      }
+      
+      if (data.url) {
+        console.log('✅ Redirecting to Stripe checkout...')
+        window.location.href = data.url
+      } else {
+        throw new Error('No checkout URL received')
       }
     } catch (error) {
       console.error('Error creating checkout session:', error)
-      toast.error('Error creating payment page')
+      toast.error(`Payment error: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 

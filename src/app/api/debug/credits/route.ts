@@ -12,16 +12,52 @@ const supabaseAdmin = createClient(
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId, credits } = await request.json()
+    const { userId, credits, action, paymentSessionId } = await request.json()
 
-    if (!userId || !credits) {
+    if (!userId || (credits === undefined && action !== 'reset')) {
       return NextResponse.json(
         { error: 'userId and credits are required' },
         { status: 400 }
       )
     }
 
-    console.log(`🔧 DEBUG: Manually updating credits for user ${userId}`)
+    console.log(`🔧 DEBUG: Processing action for user ${userId}`)
+
+    // If this is a payment-related credit addition, check for duplicates
+    if (paymentSessionId && action === 'add') {
+      console.log(`💳 Payment session detected: ${paymentSessionId}`)
+      
+      // Check if we already processed this payment session
+      const { data: existingPayment, error: paymentError } = await supabaseAdmin
+        .from('processed_events')
+        .select('id')
+        .eq('stripe_session_id', paymentSessionId)
+        .eq('user_id', userId)
+        .single()
+
+      if (existingPayment) {
+        console.log('⚠️ Payment session already processed, skipping credit addition:', paymentSessionId)
+        
+        // Still return current user credits
+        const { data: userData } = await supabaseAdmin
+          .from('users')
+          .select('credits')
+          .eq('id', userId)
+          .single()
+        
+        return NextResponse.json({ 
+          success: true, 
+          message: 'Payment already processed',
+          newTotal: userData?.credits || 0,
+          alreadyProcessed: true
+        })
+      }
+
+      if (paymentError && paymentError.code !== 'PGRST116') {
+        console.error('❌ Error checking processed payments:', paymentError)
+        // Continue processing but log the error
+      }
+    }
 
     // First, try to get current user credits using admin client
     const { data: userData, error: fetchError } = await supabaseAdmin
@@ -41,7 +77,7 @@ export async function POST(request: NextRequest) {
           .insert({
             id: userId,
             anonymous_id: userId,
-            credits: credits,
+            credits: action === 'reset' ? 1 : credits,
           })
 
         if (createError) {
@@ -52,11 +88,26 @@ export async function POST(request: NextRequest) {
           )
         }
 
-        console.log(`✅ DEBUG: Created new user ${userId} with ${credits} credits`)
+        const newTotal = action === 'reset' ? 1 : credits
+        console.log(`✅ DEBUG: Created new user ${userId} with ${newTotal} credits`)
+        
+        // Record payment session if applicable
+        if (paymentSessionId && action === 'add') {
+          await supabaseAdmin
+            .from('processed_events')
+            .insert({
+              stripe_session_id: paymentSessionId,
+              user_id: userId,
+              credits_added: credits,
+              processed_at: new Date().toISOString()
+            })
+          console.log('📝 Payment session recorded for new user:', paymentSessionId)
+        }
+        
         return NextResponse.json({ 
           success: true, 
-          message: `Created user and added ${credits} credits`,
-          newTotal: credits
+          message: `Created user with ${newTotal} credits`,
+          newTotal: newTotal
         })
       } else {
         console.error('❌ Error fetching user:', fetchError)
@@ -69,9 +120,18 @@ export async function POST(request: NextRequest) {
 
     // User exists, update credits using admin client
     currentCredits = userData?.credits || 0
-    const newCredits = currentCredits + credits
     
-    console.log(`💰 DEBUG: Updating credits: ${currentCredits} + ${credits} = ${newCredits}`)
+    let newCredits
+    if (action === 'reset') {
+      newCredits = 1
+      console.log(`🔄 DEBUG: Resetting credits to 1 for user ${userId}`)
+    } else if (action === 'set') {
+      newCredits = credits
+      console.log(`📝 DEBUG: Setting credits to ${credits} for user ${userId}`)
+    } else {
+      newCredits = currentCredits + credits
+      console.log(`💰 DEBUG: Updating credits: ${currentCredits} + ${credits} = ${newCredits}`)
+    }
     
     const { error: updateError } = await supabaseAdmin
       .from('users')
@@ -86,11 +146,31 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log(`✅ DEBUG: Successfully added ${credits} credits to user ${userId}. New total: ${newCredits}`)
+    // Record payment session if applicable
+    if (paymentSessionId && action === 'add') {
+      const { error: recordError } = await supabaseAdmin
+        .from('processed_events')
+        .insert({
+          stripe_session_id: paymentSessionId,
+          user_id: userId,
+          credits_added: credits,
+          processed_at: new Date().toISOString()
+        })
+
+      if (recordError) {
+        console.error('⚠️ Failed to record payment session:', recordError)
+        // Don't fail the API just because we couldn't record the session
+      } else {
+        console.log('📝 Payment session recorded:', paymentSessionId)
+      }
+    }
+
+    const actionMsg = action === 'reset' ? 'Reset credits to 1' : action === 'set' ? `Set credits to ${credits}` : `Added ${credits} credits`
+    console.log(`✅ DEBUG: ${actionMsg} for user ${userId}. New total: ${newCredits}`)
     
     return NextResponse.json({ 
       success: true, 
-      message: `Added ${credits} credits`,
+      message: actionMsg,
       newTotal: newCredits
     })
   } catch (error) {
@@ -100,4 +180,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}

@@ -23,7 +23,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhY
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_51MefTTQhLKGI7MgxYKtjI4pgJ9niyTxZuXLQYrOjiNkiKwsGmOWpoXZp2tP7FlrGoRoPmizbyxyogybGkjPxOQWR00AUjs7f1M
 
 # Stripe Dashboard > Developers > API keys > Secret key (GİZLİ)
-STRIPE_SECRET_KEY=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
+STRIPE_SECRET_KEY=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
 
 # Stripe Dashboard > Developers > Webhooks > Webhook endpoint > Signing secret (GİZLİ)
 STRIPE_WEBHOOK_SECRET=whsec_UOojEBjiOzrvNRkpnE8yhA8qeIoM8iRK
