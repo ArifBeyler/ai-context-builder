@@ -23,6 +23,7 @@ export const CreditDisplay = ({
 }: CreditDisplayProps) => {
   const [isLoading, setIsLoading] = useState(false)
   const [localCredits, setLocalCredits] = useState(credits)
+  const [lastTestTime, setLastTestTime] = useState<number>(0)
 
   const fetchCredits = async () => {
     if (!userId) {
@@ -53,15 +54,23 @@ export const CreditDisplay = ({
     }
   }
 
-  // Function to add test credits (for development)
+  // Function to add test credits (for development) with rate limiting
   const addTestCredits = async (amount: number = 5) => {
     if (!userId) return
+    
+    // Rate limiting - prevent rapid clicks
+    const now = Date.now()
+    if (now - lastTestTime < 2000) { // 2 seconds minimum between test credit additions
+      alert('⏰ Please wait 2 seconds between test credit additions')
+      return
+    }
+    setLastTestTime(now)
     
     try {
       const response = await fetch('/api/debug/credits', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, credits: amount })
+        body: JSON.stringify({ userId, credits: amount, source: 'test_button' })
       })
       
       const result = await response.json()
@@ -81,9 +90,17 @@ export const CreditDisplay = ({
     }
   }
 
-  // Function to simulate fake payment (for testing)
+  // Function to simulate fake payment (for testing) with rate limiting
   const simulateFakePayment = async () => {
     if (!userId) return
+    
+    // Rate limiting - prevent rapid clicks
+    const now = Date.now()
+    if (now - lastTestTime < 5000) { // 5 seconds minimum between fake payments
+      alert('⏰ Please wait 5 seconds between fake payments')
+      return
+    }
+    setLastTestTime(now)
     
     try {
       alert('🧪 Simulating payment process... (This would normally redirect to Stripe)')
@@ -103,7 +120,11 @@ export const CreditDisplay = ({
         onPurchaseCredits()
         alert(`✅ FAKE PAYMENT SUCCESS! ${result.message}\nNew total: ${result.newCredits} credits`)
       } else {
-        alert(`❌ Payment failed: ${result.error}`)
+        if (result.blocked) {
+          alert(`⏰ ${result.error}`)
+        } else {
+          alert(`❌ Payment failed: ${result.error}`)
+        }
       }
     } catch (error) {
       console.error('Error simulating payment:', error)

@@ -25,6 +25,30 @@ export async function POST(request: NextRequest) {
 
     console.log(`🧪 FAKE STRIPE: Simulating payment for user ${userId}, adding ${credits} credits`)
 
+    // PREVENT RAPID TEST PAYMENTS - Allow max 1 test payment per minute per user
+    const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString()
+    
+    const { data: recentTestPayment } = await supabaseAdmin
+      .from('processed_events')
+      .select('id, processed_at')
+      .eq('user_id', userId)
+      .eq('source', 'test')
+      .gte('processed_at', oneMinuteAgo)
+      .single()
+
+    if (recentTestPayment) {
+      console.log('🚫 BLOCKED: Test payment blocked - user already made a test payment within 1 minute')
+      return NextResponse.json(
+        { 
+          error: 'Please wait at least 1 minute between test payments',
+          blocked: true,
+          reason: 'rate_limit',
+          lastTestPayment: recentTestPayment.processed_at
+        },
+        { status: 429 }
+      )
+    }
+
     // Simulate payment delay
     await new Promise(resolve => setTimeout(resolve, 1000))
 
@@ -60,6 +84,18 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       )
     }
+
+    // Record this test payment to prevent rapid duplicates
+    const testSessionId = `test_${userId}_${Date.now()}`
+    await supabaseAdmin
+      .from('processed_events')
+      .insert({
+        stripe_session_id: testSessionId,
+        user_id: userId,
+        credits_added: credits,
+        processed_at: new Date().toISOString(),
+        source: 'test'
+      })
 
     console.log(`✅ FAKE STRIPE: Successfully processed fake payment! User ${userId} now has ${newCredits} credits`)
     

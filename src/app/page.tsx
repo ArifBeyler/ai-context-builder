@@ -150,6 +150,8 @@ const HomePageContent = () => {
     
     // Add global debug helper for browser console
     if (typeof window !== 'undefined') {
+      let lastDebugActionTime = 0; // Rate limiting for debug actions
+      
       window.debugPayment = {
         forcePaymentSuccess: () => {
           const newUrl = new URL(window.location.href)
@@ -158,6 +160,14 @@ const HomePageContent = () => {
           window.location.href = newUrl.toString()
         },
         addCredits: async (amount = 5) => {
+          // Rate limiting - prevent rapid calls
+          const now = Date.now()
+          if (now - lastDebugActionTime < 3000) { // 3 seconds minimum between debug actions
+            console.log('⏰ Please wait 3 seconds between debug credit additions')
+            return
+          }
+          lastDebugActionTime = now
+
           if (!user) {
             console.log('❌ No user logged in')
             console.log('🔧 Attempting to restore user session...')
@@ -172,11 +182,16 @@ const HomePageContent = () => {
                 const response = await fetch('/api/debug/credits', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ userId: restoredUser.id, credits: amount })
+                  body: JSON.stringify({ userId: restoredUser.id, credits: amount, source: 'debug_console' })
                 })
                 const result = await response.json()
                 console.log('✅ Credits added after user restore:', result)
-                window.location.reload()
+                
+                // DON'T reload - just update state
+                if (result.success) {
+                  setCredits(result.newTotal || amount)
+                  refreshCredits()
+                }
                 return
               } else {
                 console.log('❌ Could not restore user session')
@@ -194,17 +209,30 @@ const HomePageContent = () => {
             const response = await fetch('/api/debug/credits', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ userId: user.id, credits: amount })
+              body: JSON.stringify({ userId: user.id, credits: amount, source: 'debug_console' })
             })
             const result = await response.json()
             console.log('✅ Credits added:', result)
-            setCredits(result.newTotal || credits)
-            refreshCredits() // Also refresh from database
+            
+            if (result.success) {
+              setCredits(result.newTotal || credits)
+              refreshCredits() // Also refresh from database
+            } else if (result.blocked) {
+              console.log('🚫 Credit addition blocked:', result.reason)
+            }
           } catch (error) {
             console.error('❌ Failed to add credits:', error)
           }
         },
         signInAnonymously: async () => {
+          // Rate limiting for sign in too
+          const now = Date.now()
+          if (now - lastDebugActionTime < 3000) {
+            console.log('⏰ Please wait 3 seconds between debug actions')
+            return
+          }
+          lastDebugActionTime = now
+
           try {
             console.log('🔧 Signing in anonymously...')
             const { data, error } = await supabase.auth.signInAnonymously()
@@ -251,12 +279,13 @@ const HomePageContent = () => {
           console.log('Current URL params:', Object.fromEntries(url.searchParams.entries()))
         }
       }
-      console.log('🔧 Debug helpers loaded:')
+      console.log('🔧 Debug helpers loaded (with rate limiting):')
       console.log('- debugPayment.checkUserState() - Check current user and credits')
       console.log('- debugPayment.signInAnonymously() - Sign in as anonymous user')
       console.log('- debugPayment.addCredits(5) - Add credits (auto fixes user if needed)')
       console.log('- debugPayment.forcePaymentSuccess() - Simulate payment success')
       console.log('- debugPayment.checkUrlParams() - Check URL parameters')
+      console.log('⏰ Note: Rate limited to prevent loops (3 second cooldown)')
     }
   }, [supabase])
 
