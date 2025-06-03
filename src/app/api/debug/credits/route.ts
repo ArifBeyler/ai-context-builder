@@ -23,212 +23,167 @@ export async function POST(request: NextRequest) {
 
     console.log(`🔧 DEBUG: Processing action "${action}" for user ${userId}${source ? ` (source: ${source})` : ''}`)
 
-    // If this is just a check action, only verify if payment was processed
+    // Handle check action - verify if payment was already processed
     if (action === 'check' && paymentSessionId) {
       console.log(`🔍 Checking if payment session was already processed: ${paymentSessionId}`)
       
-      const { data: existingPayment, error: paymentError } = await supabaseAdmin
+      const { data: existingPayment } = await supabaseAdmin
         .from('processed_events')
-        .select('id, credits_added, processed_at, source')
+        .select('id, user_id, credits_added, source, processed_at')
         .eq('stripe_session_id', paymentSessionId)
-        .eq('user_id', userId)
         .single()
 
       if (existingPayment) {
-        console.log('✅ Payment session already processed:', existingPayment)
-        return NextResponse.json({ 
-          success: true, 
-          message: 'Payment already processed',
+        console.log(`✅ Payment already processed by ${existingPayment.source}:`, existingPayment)
+        return NextResponse.json({
           alreadyProcessed: true,
+          processedBy: existingPayment.source,
           processedAt: existingPayment.processed_at,
-          creditsAdded: existingPayment.credits_added,
-          source: existingPayment.source
+          creditsAdded: existingPayment.credits_added
         })
       } else {
-        console.log('❌ Payment session not found in processed events')
-        return NextResponse.json({ 
-          success: true, 
-          message: 'Payment not processed yet',
-          alreadyProcessed: false
+        console.log('❌ Payment not yet processed - webhook may have failed')
+        return NextResponse.json({
+          alreadyProcessed: false,
+          message: 'Payment not yet processed by webhook'
         })
       }
     }
 
-    // STRICT DUPLICATE PREVENTION FOR PAYMENT-RELATED ACTIONS
-    if (paymentSessionId && action === 'add') {
-      console.log(`💳 Payment session detected: ${paymentSessionId}`)
+    // Handle add action with fallback protection
+    if (action === 'add' && paymentSessionId) {
+      console.log(`💳 Processing fallback credit addition for session: ${paymentSessionId}`)
       
-      // Check if we already processed this payment session for ANY user
-      const { data: existingPayment, error: paymentError } = await supabaseAdmin
+      // Double-check webhook didn't process this while we were waiting
+      const { data: doubleCheck } = await supabaseAdmin
         .from('processed_events')
-        .select('id, credits_added, processed_at, source, user_id')
+        .select('id, source')
         .eq('stripe_session_id', paymentSessionId)
         .single()
 
-      if (existingPayment) {
-        console.log('⚠️ Payment session already processed:', {
-          sessionId: paymentSessionId,
-          originalUserId: existingPayment.user_id,
-          requestedUserId: userId,
-          source: existingPayment.source,
-          processedAt: existingPayment.processed_at
-        })
-        
-        // If different user ID, this might be a session restoration issue
-        if (existingPayment.user_id !== userId) {
-          console.log('🔄 Different user ID detected - this may be session restoration')
-          
-          // Get the actual credits from the original user
-          const { data: originalUserData } = await supabaseAdmin
-            .from('users')
-            .select('credits')
-            .eq('id', existingPayment.user_id)
-            .single()
-
-          return NextResponse.json({ 
-            success: true, 
-            message: 'Payment already processed for different user - session restoration needed',
-            alreadyProcessed: true,
-            originalUserId: existingPayment.user_id,
-            originalUserCredits: originalUserData?.credits || 0,
-            creditsAdded: existingPayment.credits_added,
-            processedAt: existingPayment.processed_at,
-            source: existingPayment.source
-          })
-        }
-        
-        // Same user - just return current credits
-        const { data: userData } = await supabaseAdmin
-          .from('users')
-          .select('credits')
-          .eq('id', userId)
-          .single()
-        
-        return NextResponse.json({ 
-          success: true, 
-          message: 'Payment already processed',
-          newTotal: userData?.credits || 0,
-          alreadyProcessed: true,
-          previouslyAdded: existingPayment.credits_added,
-          processedAt: existingPayment.processed_at,
-          source: existingPayment.source
+      if (doubleCheck) {
+        console.log(`🚫 BLOCKED: Payment already processed by ${doubleCheck.source} during fallback attempt`)
+        return NextResponse.json({
+          success: false,
+          blocked: true,
+          reason: 'already_processed',
+          processedBy: doubleCheck.source,
+          error: `Payment already processed by ${doubleCheck.source}`
         })
       }
 
-      if (paymentError && paymentError.code !== 'PGRST116') {
-        console.error('❌ Error checking processed payments:', paymentError)
-        // Continue processing but log the error
+      // Proceed with fallback credit addition
+      const { data: userData, error: fetchError } = await supabaseAdmin
+        .from('users')
+        .select('credits')
+        .eq('id', userId)
+        .single()
+
+      if (fetchError) {
+        console.error('❌ Error fetching user:', fetchError)
+        return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 })
       }
 
-      // PREVENT FRONTEND CREDIT ADDITION IF WEBHOOK SOURCE EXISTS
-      if (source === 'frontend') {
-        // Check if webhook has already processed this within the last few minutes
-        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
-        
-        const { data: recentWebhookPayment } = await supabaseAdmin
-          .from('processed_events')
-          .select('id, credits_added, processed_at, source')
-          .eq('stripe_session_id', paymentSessionId)
-          .eq('source', 'webhook')
-          .gte('processed_at', fiveMinutesAgo)
-          .single()
+      const currentCredits = userData?.credits || 0
+      const newCredits = currentCredits + credits
 
-        if (recentWebhookPayment) {
-          console.log('🚫 BLOCKED: Frontend credit addition blocked - webhook already processed this payment')
-          
-          const { data: userData } = await supabaseAdmin
-            .from('users')
-            .select('credits')
-            .eq('id', userId)
-            .single()
-          
-          return NextResponse.json({ 
-            success: true, 
-            message: 'Webhook already processed this payment',
-            newTotal: userData?.credits || 0,
+      console.log(`💰 FALLBACK: Updating credits: ${currentCredits} + ${credits} = ${newCredits}`)
+
+      const { error: updateError } = await supabaseAdmin
+        .from('users')
+        .update({ credits: newCredits })
+        .eq('id', userId)
+
+      if (updateError) {
+        console.error('❌ Error updating credits:', updateError)
+        return NextResponse.json({ success: false, error: 'Failed to update credits' }, { status: 500 })
+      }
+
+      // Record this fallback payment
+      await supabaseAdmin
+        .from('processed_events')
+        .insert({
+          stripe_session_id: paymentSessionId,
+          user_id: userId,
+          credits_added: credits,
+          processed_at: new Date().toISOString(),
+          source: source || 'frontend_fallback'
+        })
+
+      console.log(`✅ FALLBACK: Successfully added ${credits} credits. User ${userId} now has ${newCredits} credits`)
+      
+      return NextResponse.json({
+        success: true,
+        message: `Successfully added ${credits} credits via fallback`,
+        newTotal: newCredits,
+        creditsAdded: credits,
+        fallback: true
+      })
+    }
+
+    // RATE LIMITING for debug actions (prevent infinite loops)
+    if (source === 'debug_console' || source === 'test_button') {
+      console.log(`⏰ Rate limiting check for source: ${source}`)
+      
+      const thirtySecondsAgo = new Date(Date.now() - 30 * 1000).toISOString()
+      
+      const { data: recentDebugActions } = await supabaseAdmin
+        .from('processed_events')
+        .select('id, processed_at')
+        .eq('user_id', userId)
+        .eq('source', source)
+        .gte('processed_at', thirtySecondsAgo)
+
+      if (recentDebugActions && recentDebugActions.length > 0) {
+        console.log(`🚫 BLOCKED: Rate limit - user made ${recentDebugActions.length} debug actions in last 30 seconds`)
+        return NextResponse.json(
+          { 
+            success: false,
             blocked: true,
-            reason: 'webhook_already_processed',
-            webhookProcessedAt: recentWebhookPayment.processed_at
-          })
-        }
+            reason: 'rate_limit',
+            error: `Please wait 30 seconds between ${source} actions`,
+            lastAction: recentDebugActions[recentDebugActions.length - 1].processed_at
+          },
+          { status: 429 }
+        )
       }
     }
 
-    // First, try to get current user credits using admin client
+    // Reset credits action
+    if (action === 'reset') {
+      console.log(`🔄 Resetting credits for user ${userId}`)
+      
+      const { error: resetError } = await supabaseAdmin
+        .from('users')
+        .update({ credits: 0 })
+        .eq('id', userId)
+
+      if (resetError) {
+        console.error('❌ Error resetting credits:', resetError)
+        return NextResponse.json({ success: false, error: 'Failed to reset credits' }, { status: 500 })
+      }
+
+      console.log(`✅ Credits reset to 0 for user ${userId}`)
+      return NextResponse.json({ success: true, message: 'Credits reset to 0', newTotal: 0 })
+    }
+
+    // Normal credit addition (for debug/test purposes)
     const { data: userData, error: fetchError } = await supabaseAdmin
       .from('users')
       .select('credits')
       .eq('id', userId)
       .single()
 
-    let currentCredits = 0
-    
     if (fetchError) {
-      if (fetchError.code === 'PGRST116') {
-        // User doesn't exist, create it using admin client
-        console.log('🆕 User not found, creating new user record...')
-        const { error: createError } = await supabaseAdmin
-          .from('users')
-          .insert({
-            id: userId,
-            anonymous_id: userId,
-            credits: action === 'reset' ? 1 : credits,
-          })
-
-        if (createError) {
-          console.error('❌ Error creating user:', createError)
-          return NextResponse.json(
-            { error: 'Failed to create user: ' + createError.message },
-            { status: 500 }
-          )
-        }
-
-        const newTotal = action === 'reset' ? 1 : credits
-        console.log(`✅ DEBUG: Created new user ${userId} with ${newTotal} credits`)
-        
-        // Record payment session if applicable
-        if (paymentSessionId && action === 'add') {
-          await supabaseAdmin
-            .from('processed_events')
-            .insert({
-              stripe_session_id: paymentSessionId,
-              user_id: userId,
-              credits_added: credits,
-              processed_at: new Date().toISOString(),
-              source: source || 'unknown'
-            })
-          console.log('📝 Payment session recorded for new user:', paymentSessionId)
-        }
-        
-        return NextResponse.json({ 
-          success: true, 
-          message: `Created user with ${newTotal} credits`,
-          newTotal: newTotal
-        })
-      } else {
-        console.error('❌ Error fetching user:', fetchError)
-        return NextResponse.json(
-          { error: 'User fetch error: ' + fetchError.message },
-          { status: 500 }
-        )
-      }
+      console.error('❌ Error fetching user:', fetchError)
+      return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 })
     }
 
-    // User exists, update credits using admin client
-    currentCredits = userData?.credits || 0
-    
-    let newCredits
-    if (action === 'reset') {
-      newCredits = 1
-      console.log(`🔄 DEBUG: Resetting credits to 1 for user ${userId}`)
-    } else if (action === 'set') {
-      newCredits = credits
-      console.log(`📝 DEBUG: Setting credits to ${credits} for user ${userId}`)
-    } else {
-      newCredits = currentCredits + credits
-      console.log(`💰 DEBUG: Updating credits: ${currentCredits} + ${credits} = ${newCredits}`)
-    }
-    
+    const currentCredits = userData?.credits || 0
+    const newCredits = currentCredits + credits
+
+    console.log(`💰 Adding credits: ${currentCredits} + ${credits} = ${newCredits}`)
+
     const { error: updateError } = await supabaseAdmin
       .from('users')
       .update({ credits: newCredits })
@@ -236,44 +191,35 @@ export async function POST(request: NextRequest) {
 
     if (updateError) {
       console.error('❌ Error updating credits:', updateError)
-      return NextResponse.json(
-        { error: 'Failed to update credits: ' + updateError.message },
-        { status: 500 }
-      )
+      return NextResponse.json({ success: false, error: 'Failed to update credits' }, { status: 500 })
     }
 
-    // Record payment session if applicable
-    if (paymentSessionId && action === 'add') {
-      const { error: recordError } = await supabaseAdmin
+    // Record this debug action
+    if (source && (source === 'debug_console' || source === 'test_button')) {
+      await supabaseAdmin
         .from('processed_events')
         .insert({
-          stripe_session_id: paymentSessionId,
+          stripe_session_id: `debug_${Date.now()}`,
           user_id: userId,
           credits_added: credits,
           processed_at: new Date().toISOString(),
-          source: source || 'unknown'
+          source: source
         })
-
-      if (recordError) {
-        console.error('⚠️ Failed to record payment session:', recordError)
-        // Don't fail the API just because we couldn't record the session
-      } else {
-        console.log('📝 Payment session recorded:', paymentSessionId, `(source: ${source || 'unknown'})`)
-      }
     }
 
-    const actionMsg = action === 'reset' ? 'Reset credits to 1' : action === 'set' ? `Set credits to ${credits}` : `Added ${credits} credits`
-    console.log(`✅ DEBUG: ${actionMsg} for user ${userId}. New total: ${newCredits}`)
+    console.log(`✅ Successfully added ${credits} credits. User ${userId} now has ${newCredits} credits`)
     
-    return NextResponse.json({ 
-      success: true, 
-      message: actionMsg,
-      newTotal: newCredits
+    return NextResponse.json({
+      success: true,
+      message: `Successfully added ${credits} credits`,
+      newTotal: newCredits,
+      creditsAdded: credits
     })
+
   } catch (error) {
-    console.error('💥 DEBUG endpoint error:', error)
+    console.error('💥 Debug credits API error:', error)
     return NextResponse.json(
-      { error: 'Internal server error: ' + (error instanceof Error ? error.message : 'Unknown error') },
+      { success: false, error: 'Internal server error: ' + (error instanceof Error ? error.message : 'Unknown error') },
       { status: 500 }
     )
   }

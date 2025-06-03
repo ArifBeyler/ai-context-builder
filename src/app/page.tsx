@@ -309,151 +309,107 @@ const HomePageContent = () => {
       return
     }
     
-    // Handle successful payment - let webhook handle credit addition
-    if (success === 'true' && sessionId) {
-      console.log('✅ Payment success detected - webhook will handle credit addition')
+    // Handle successful payment with hybrid approach (webhook primary + fallback)
+    if (success === 'true' && sessionId && user) {
+      console.log('✅ Payment success detected - implementing hybrid approach')
       console.log('🔖 Session ID:', sessionId)
       
-      if (user) {
-        // Just refresh credits from database (webhook should have updated them)
-        const refreshCreditsAfterPayment = async () => {
-          console.log('🔄 Refreshing credits from database after payment...')
+      const handlePaymentSuccess = async () => {
+        console.log('🔄 Starting payment success processing...')
+        
+        // Clear URL parameters immediately to prevent re-triggers
+        const newUrl = new URL(window.location.href)
+        newUrl.searchParams.delete('success')
+        newUrl.searchParams.delete('session_id')
+        newUrl.searchParams.delete('canceled')
+        window.history.replaceState({}, '', newUrl.toString())
+        
+        try {
+          // Step 1: Wait for webhook to process (webhook should be primary)
+          console.log('⏳ Waiting for webhook to process (3 seconds)...')
+          await new Promise(resolve => setTimeout(resolve, 3000))
           
-          // Wait a moment for webhook to process
-          await new Promise(resolve => setTimeout(resolve, 2000))
+          // Step 2: Check if webhook already processed this payment
+          console.log('🔍 Checking if webhook processed the payment...')
+          const checkResponse = await fetch('/api/debug/credits', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              userId: user.id, 
+              action: 'check',
+              paymentSessionId: sessionId,
+              source: 'frontend_fallback'
+            })
+          })
           
-          try {
+          const checkResult = await checkResponse.json()
+          console.log('📋 Webhook check result:', checkResult)
+          
+          if (checkResult.alreadyProcessed) {
+            console.log('✅ Webhook already processed payment - refreshing credits from DB')
+            
+            // Refresh credits from database
             const { data: userData, error } = await supabase
               .from('users')
               .select('credits')
               .eq('id', user.id)
               .single()
 
-            if (error) {
-              console.error('Error fetching user credits:', error)
-              toast.error('Error refreshing credits. Please refresh the page.')
-            } else {
-              setCredits(userData?.credits || 0)
+            if (!error && userData) {
+              setCredits(userData.credits)
               toast.success('Payment successful! Credits have been added to your account.')
-              console.log('✅ Credits refreshed from database:', userData.credits)
-              
-              // Restore pre-payment state if available
-              const prePaymentStateStr = sessionStorage.getItem('prePaymentState');
-              if (prePaymentStateStr) {
-                console.log('🔄 Pre-payment state found, will restore user position')
-                sessionStorage.setItem('forceStartFlow', 'true')
-                console.log('✅ forceStartFlow flag set for recovery')
-              } else {
-                console.log('✅ Payment completed - user can start fresh with new credits')
-              }
-            }
-          } catch (error) {
-            console.error('Error refreshing credits:', error)
-            toast.error('Error refreshing credits. Please refresh the page.')
-          }
-        }
-        
-        // Execute credit refresh
-        refreshCreditsAfterPayment()
-        
-        // Clear URL parameters
-        const newUrl = new URL(window.location.href)
-        newUrl.searchParams.delete('success')
-        newUrl.searchParams.delete('session_id')
-        newUrl.searchParams.delete('canceled')
-        window.history.replaceState({}, '', newUrl.toString())
-      } else {
-        // If no user session, try to restore from Stripe session
-        console.log('🔄 No user session found, attempting to restore from Stripe session...')
-        
-        const restoreUserSession = async () => {
-          try {
-            console.log('🔍 Fetching Stripe session data for user ID...')
-            
-            const stripeResponse = await fetch(`/api/stripe/session/${sessionId}`)
-            
-            if (stripeResponse.ok) {
-              const stripeData = await stripeResponse.json()
-              console.log('📋 Stripe session data:', stripeData)
-              
-              if (stripeData.userId) {
-                console.log('🎯 Found user ID from Stripe session:', stripeData.userId)
-                
-                // Create new anonymous session
-                const { data: authData, error: authError } = await supabase.auth.signInAnonymously()
-                
-                if (authData?.user && !authError) {
-                  console.log('🔄 New session created, user will see updated credits from webhook')
-                  setUser(authData.user)
-                  
-                  // Refresh credits from database (webhook should have updated them)
-                  await new Promise(resolve => setTimeout(resolve, 2000))
-                  
-                  const { data: userData } = await supabase
-                    .from('users')
-                    .select('credits')
-                    .eq('id', stripeData.userId)
-                    .single()
-                  
-                  if (userData) {
-                    setCredits(userData.credits || 0)
-                    toast.success('Payment successful! Credits added to your account.')
-                  }
-                  
-                  // Clear URL parameters
-                  const newUrl = new URL(window.location.href)
-                  newUrl.searchParams.delete('success')
-                  newUrl.searchParams.delete('session_id')
-                  newUrl.searchParams.delete('canceled')
-                  window.history.replaceState({}, '', newUrl.toString())
-                  
-                  // Restore flow if there was pre-payment state
-                  const prePaymentStateStr = sessionStorage.getItem('prePaymentState');
-                  if (prePaymentStateStr) {
-                    console.log('🔄 Pre-payment state found, will restore after Stripe session recovery')
-                    sessionStorage.setItem('forceStartFlow', 'true')
-                  } else {
-                    console.log('✅ Stripe session recovery complete - user can start fresh')
-                  }
-                  return
-                }
-              }
-            }
-            
-            // Fallback: create new anonymous session
-            const { data: { user: restoredUser }, error } = await supabase.auth.getUser()
-            
-            if (error || !restoredUser) {
-              console.log('🆘 Could not restore user session, creating new anonymous user...')
-              
-              const { data: authData, error: authError } = await supabase.auth.signInAnonymously()
-              
-              if (authData?.user && !authError) {
-                console.log('🆘 Emergency: Created new anonymous user after payment')
-                setUser(authData.user)
-                
-                toast.success('Payment successful! Your credits are being processed.')
-                
-                // Clear URL parameters
-                const newUrl = new URL(window.location.href)
-                newUrl.searchParams.delete('success')
-                newUrl.searchParams.delete('session_id')
-                newUrl.searchParams.delete('canceled')
-                window.history.replaceState({}, '', newUrl.toString())
-              }
+              console.log('✅ Credits updated from database:', userData.credits)
             } else {
-              console.log('✅ User session restored:', restoredUser.id)
-              setUser(restoredUser)
-              refreshCredits()
+              console.error('Error refreshing credits:', error)
+              toast.error('Payment processed but error refreshing display. Please refresh page.')
             }
-          } catch (error) {
-            console.error('❌ Error restoring session:', error)
-            toast.error('Session restoration failed. Please contact support.')
+          } else {
+            console.log('⚠️ Webhook did not process payment - using fallback')
+            
+            // Fallback: Add credits via frontend (only if webhook failed)
+            const fallbackResponse = await fetch('/api/debug/credits', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                userId: user.id, 
+                credits: 5, // Standard credit amount for payments
+                paymentSessionId: sessionId,
+                source: 'frontend_fallback',
+                action: 'add'
+              })
+            })
+            
+            const fallbackResult = await fallbackResponse.json()
+            console.log('🔄 Fallback result:', fallbackResult)
+            
+            if (fallbackResult.success) {
+              setCredits(fallbackResult.newTotal)
+              toast.success('Payment successful! Credits have been added to your account.')
+              console.log('✅ Credits added via fallback:', fallbackResult.newTotal)
+            } else {
+              console.error('Fallback failed:', fallbackResult.error)
+              toast.error('Payment processed but error adding credits. Please contact support.')
+            }
           }
+          
+          // Restore pre-payment state if available
+          const prePaymentStateStr = sessionStorage.getItem('prePaymentState');
+          if (prePaymentStateStr) {
+            console.log('🔄 Pre-payment state found, will restore user position')
+            sessionStorage.setItem('forceStartFlow', 'true')
+            console.log('✅ forceStartFlow flag set for recovery')
+          } else {
+            console.log('✅ Payment completed - user can start fresh with new credits')
+          }
+          
+        } catch (error) {
+          console.error('❌ Error in payment success processing:', error)
+          toast.error('Payment processed but error updating credits. Please refresh the page.')
         }
-
-        restoreUserSession()
       }
+      
+      // Execute payment success handling
+      handlePaymentSuccess()
     }
   }, [searchParams, user, supabase])
 
