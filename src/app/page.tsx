@@ -297,7 +297,53 @@ const HomePageContent = () => {
         
         // Single payment completion function with strict duplication prevention
         const completePaymentOnce = async () => {
-          console.log('🚀 Completing payment - adding credits via API (ONE TIME ONLY)...')
+          console.log('🚀 Completing payment - checking if webhook already processed...')
+          
+          // First check if webhook already processed this payment
+          try {
+            const checkResponse = await fetch('/api/debug/credits', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                userId: user.id, 
+                credits: 0, // 0 credits = just check, don't add
+                action: 'check',
+                paymentSessionId: sessionId
+              })
+            })
+            
+            const checkResult = await checkResponse.json()
+            
+            if (checkResult.alreadyProcessed) {
+              console.log('✅ Webhook already processed this payment, skipping frontend credit addition')
+              
+              // Just refresh credits from database
+              const { data: userData } = await supabase
+                .from('users')
+                .select('credits')
+                .eq('id', user.id)
+                .single()
+              
+              if (userData) {
+                setCredits(userData.credits || 0)
+                toast.success('Payment successful! Credits updated by webhook.')
+              }
+              
+              // Clear URL parameters
+              const newUrl = new URL(window.location.href)
+              newUrl.searchParams.delete('success')
+              newUrl.searchParams.delete('session_id')
+              newUrl.searchParams.delete('canceled')
+              window.history.replaceState({}, '', newUrl.toString())
+              
+              return true
+            }
+          } catch (error) {
+            console.log('⚠️ Could not check webhook status, proceeding with frontend credit addition')
+          }
+          
+          // If webhook hasn't processed, add credits via frontend (for localhost)
+          console.log('🚀 Adding credits via frontend (webhook not processed)')
           
           try {
             const response = await fetch('/api/debug/credits', {
@@ -307,14 +353,15 @@ const HomePageContent = () => {
                 userId: user.id, 
                 credits: 5,
                 action: 'add',
-                paymentSessionId: sessionId // Include for idempotency tracking
+                paymentSessionId: sessionId,
+                source: 'frontend' // Mark as frontend source
               })
             })
             
             const result = await response.json()
             
             if (result.success) {
-              console.log('✅ Credits added successfully:', result)
+              console.log('✅ Credits added successfully via frontend:', result)
               setCredits(result.newTotal || 5)
               toast.success('Payment successful! Credits added to your account.')
               
@@ -334,6 +381,28 @@ const HomePageContent = () => {
               } else {
                 console.log('✅ Payment completed - user can start fresh with new credits')
               }
+              
+              return true
+            } else if (result.alreadyProcessed) {
+              console.log('✅ Payment already processed during request, refreshing credits')
+              // Refresh credits from database
+              const { data: userData } = await supabase
+                .from('users')
+                .select('credits')
+                .eq('id', user.id)
+                .single()
+              
+              if (userData) {
+                setCredits(userData.credits || 0)
+                toast.success('Payment successful! Credits already updated.')
+              }
+              
+              // Clear URL parameters
+              const newUrl = new URL(window.location.href)
+              newUrl.searchParams.delete('success')
+              newUrl.searchParams.delete('session_id')
+              newUrl.searchParams.delete('canceled')
+              window.history.replaceState({}, '', newUrl.toString())
               
               return true
             } else {

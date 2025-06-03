@@ -117,7 +117,8 @@ export async function POST(request: NextRequest) {
             stripe_session_id: session.id,
             user_id: userId,
             credits_added: credits,
-            processed_at: new Date().toISOString()
+            processed_at: new Date().toISOString(),
+            source: 'webhook'
           })
 
         if (recordError) {
