@@ -318,14 +318,11 @@ const HomePageContent = () => {
                 console.log('✅ Payment completed - user can start fresh with new credits')
               }
               
-              if (credits > 0) {
+              const updatedCredits = result.newTotal ?? credits + 5
+              if (updatedCredits > 0) {
                 console.log('✅ Credits found, payment verification complete!')
                 toast.success('Payment successful! Credits added to your account.')
                 return true
-              } else if (credits === 0) {
-                console.log('⏰ Max retries reached with no credits, force completing payment...')
-                await forceCompletePayment()
-                return
               }
             } else {
               console.error('❌ Failed to force-add credits:', result)
