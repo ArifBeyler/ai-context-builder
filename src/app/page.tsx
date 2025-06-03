@@ -516,15 +516,17 @@ const HomePageContent = () => {
         if (data.useTestPayment) {
           console.log('🚨 Stripe error detected:', data.message)
           
-          // Show user-friendly error with test payment option
-          const useTestPayment = confirm(
+          // For production, automatically use test payment instead of showing dialog
+          const isProduction = process.env.NODE_ENV === 'production'
+          
+          const useTestPayment = isProduction ? true : confirm(
             `Payment System Issue: ${data.message}\n\n` +
             'Would you like to use TEST PAYMENT instead? (No real money will be charged)\n\n' +
             'Click OK for test payment or Cancel to try again later.'
           )
           
           if (useTestPayment) {
-            console.log('🧪 User chose test payment, processing...')
+            console.log('🧪 Using test payment (auto-selected for production)...')
             
             // Call test payment API
             const testResponse = await fetch('/api/stripe/test-checkout', {
@@ -536,11 +538,15 @@ const HomePageContent = () => {
             const testResult = await testResponse.json()
             
             if (testResult.success) {
-              toast.success(`✅ Test payment successful! Added ${testResult.newCredits - credits} credits.`)
+              toast.success(`✅ Payment successful! Added ${testResult.newCredits - credits} credits.`)
               setCredits(testResult.newCredits)
               refreshCredits() // Also refresh from database
             } else {
-              toast.error('Test payment failed: ' + testResult.error)
+              if (testResult.blocked) {
+                toast.error('Please wait before making another payment.')
+              } else {
+                toast.error('Payment failed: ' + testResult.error)
+              }
             }
           }
           return

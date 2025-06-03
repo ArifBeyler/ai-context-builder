@@ -8,31 +8,31 @@
 # SUPABASE AYARLARI
 # -----------------
 # Supabase Dashboard > Settings > API > Project URL
-NEXT_PUBLIC_SUPABASE_URL=https://usisgejqyqeerbcjzkmx.supabase.co
+NEXT_PUBLIC_SUPABASE_URL=YOUR_SUPABASE_PROJECT_URL
 
 # Supabase Dashboard > Settings > API > Project API keys > anon public
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzaXNnZWpxeXFlZXJiY2p6a214Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg2MTA2NDQsImV4cCI6MjA2NDE4NjY0NH0.j55SqYKgg2wW-nZH4mZ9P4-_DyXE-AxWpwQyk0vYIIA
+NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
 
 # Supabase Dashboard > Settings > API > Project API keys > service_role (GİZLİ - sadece backend için)
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzaXNnZWpxeXFlZXJiY2p6a214Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0ODYxMDY0NCwiZXhwIjoyMDY0MTg2NjQ0fQ.fJBSALRm1yqxL8YjHVIfGrXlDp67t3bHGrVLTbTkg44
+SUPABASE_SERVICE_ROLE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY
 
 
 # STRIPE AYARLARI (Ödeme Sistemi)
 # --------------------------------
 # Stripe Dashboard > Developers > API keys > Publishable key
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_51MefTTQhLKGI7MgxYKtjI4pgJ9niyTxZuXLQYrOjiNkiKwsGmOWpoXZp2tP7FlrGoRoPmizbyxyogybGkjPxOQWR00AUjs7f1M
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_YOUR_STRIPE_PUBLISHABLE_KEY_HERE
 
 # Stripe Dashboard > Developers > API keys > Secret key (GİZLİ)
-STRIPE_SECRET_KEY=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
+STRIPE_SECRET_KEY=sk_test_YOUR_STRIPE_SECRET_KEY_HERE
 
 # Stripe Dashboard > Developers > Webhooks > Webhook endpoint > Signing secret (GİZLİ)
-STRIPE_WEBHOOK_SECRET=whsec_UOojEBjiOzrvNRkpnE8yhA8qeIoM8iRK
+STRIPE_WEBHOOK_SECRET=whsec_YOUR_WEBHOOK_SECRET_HERE
 
 
 # OPENAI AYARLARI (AI Özellikleri için)
 # -------------------------------------
 # OpenAI Dashboard > API Keys > Create new secret key
-NEXT_PUBLIC_OPENAI_API_KEY=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
+NEXT_PUBLIC_OPENAI_API_KEY=sk-proj-YOUR_OPENAI_API_KEY_HERE
 
 
 # UYGULAMA AYARLARI

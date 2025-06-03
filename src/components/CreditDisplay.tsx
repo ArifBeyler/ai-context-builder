@@ -191,7 +191,7 @@ export const CreditDisplay = ({
           </button>
 
           {/* Debug buttons only in development - TEMPORARILY HIDDEN FOR TESTING */}
-          {false && isDevelopment && userId && (
+          {true && isDevelopment && userId && (
             <div className="flex items-center gap-2">
               <Button 
                 onClick={simulateFakePayment}
