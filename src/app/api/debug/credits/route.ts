@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
       
       const { data: existingPayment, error: paymentError } = await supabaseAdmin
         .from('processed_events')
-        .select('id, credits_added, processed_at')
+        .select('id, credits_added, processed_at, source')
         .eq('stripe_session_id', paymentSessionId)
         .eq('user_id', userId)
         .single()
@@ -41,7 +41,8 @@ export async function POST(request: NextRequest) {
           message: 'Payment already processed',
           alreadyProcessed: true,
           processedAt: existingPayment.processed_at,
-          creditsAdded: existingPayment.credits_added
+          creditsAdded: existingPayment.credits_added,
+          source: existingPayment.source
         })
       } else {
         console.log('❌ Payment session not found in processed events')
@@ -53,22 +54,50 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // If this is a payment-related credit addition, check for duplicates
+    // STRICT DUPLICATE PREVENTION FOR PAYMENT-RELATED ACTIONS
     if (paymentSessionId && action === 'add') {
       console.log(`💳 Payment session detected: ${paymentSessionId}`)
       
-      // Check if we already processed this payment session
+      // Check if we already processed this payment session for ANY user
       const { data: existingPayment, error: paymentError } = await supabaseAdmin
         .from('processed_events')
-        .select('id, credits_added, processed_at')
+        .select('id, credits_added, processed_at, source, user_id')
         .eq('stripe_session_id', paymentSessionId)
-        .eq('user_id', userId)
         .single()
 
       if (existingPayment) {
-        console.log('⚠️ Payment session already processed, skipping credit addition:', paymentSessionId)
+        console.log('⚠️ Payment session already processed:', {
+          sessionId: paymentSessionId,
+          originalUserId: existingPayment.user_id,
+          requestedUserId: userId,
+          source: existingPayment.source,
+          processedAt: existingPayment.processed_at
+        })
         
-        // Still return current user credits
+        // If different user ID, this might be a session restoration issue
+        if (existingPayment.user_id !== userId) {
+          console.log('🔄 Different user ID detected - this may be session restoration')
+          
+          // Get the actual credits from the original user
+          const { data: originalUserData } = await supabaseAdmin
+            .from('users')
+            .select('credits')
+            .eq('id', existingPayment.user_id)
+            .single()
+
+          return NextResponse.json({ 
+            success: true, 
+            message: 'Payment already processed for different user - session restoration needed',
+            alreadyProcessed: true,
+            originalUserId: existingPayment.user_id,
+            originalUserCredits: originalUserData?.credits || 0,
+            creditsAdded: existingPayment.credits_added,
+            processedAt: existingPayment.processed_at,
+            source: existingPayment.source
+          })
+        }
+        
+        // Same user - just return current credits
         const { data: userData } = await supabaseAdmin
           .from('users')
           .select('credits')
@@ -81,13 +110,47 @@ export async function POST(request: NextRequest) {
           newTotal: userData?.credits || 0,
           alreadyProcessed: true,
           previouslyAdded: existingPayment.credits_added,
-          processedAt: existingPayment.processed_at
+          processedAt: existingPayment.processed_at,
+          source: existingPayment.source
         })
       }
 
       if (paymentError && paymentError.code !== 'PGRST116') {
         console.error('❌ Error checking processed payments:', paymentError)
         // Continue processing but log the error
+      }
+
+      // PREVENT FRONTEND CREDIT ADDITION IF WEBHOOK SOURCE EXISTS
+      if (source === 'frontend') {
+        // Check if webhook has already processed this within the last few minutes
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+        
+        const { data: recentWebhookPayment } = await supabaseAdmin
+          .from('processed_events')
+          .select('id, credits_added, processed_at, source')
+          .eq('stripe_session_id', paymentSessionId)
+          .eq('source', 'webhook')
+          .gte('processed_at', fiveMinutesAgo)
+          .single()
+
+        if (recentWebhookPayment) {
+          console.log('🚫 BLOCKED: Frontend credit addition blocked - webhook already processed this payment')
+          
+          const { data: userData } = await supabaseAdmin
+            .from('users')
+            .select('credits')
+            .eq('id', userId)
+            .single()
+          
+          return NextResponse.json({ 
+            success: true, 
+            message: 'Webhook already processed this payment',
+            newTotal: userData?.credits || 0,
+            blocked: true,
+            reason: 'webhook_already_processed',
+            webhookProcessedAt: recentWebhookPayment.processed_at
+          })
+        }
       }
     }
 
